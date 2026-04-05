@@ -1,0 +1,14 @@
+name: Placeholder
+description: Placeholder plugin used to initialize the self-hosted plugin repository
+version: 0.0.1
+
+exec:
+  - python3
+  - "{pluginDir}/placeholder.py"
+
+interface: raw
+errLog: info
+
+tasks:
+  - name: Placeholder task
+    description: Performs no real work and exists only to validate plugin source publishing
