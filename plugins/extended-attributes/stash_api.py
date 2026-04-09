@@ -91,6 +91,50 @@ def find_root_tags(client: StashClient) -> list[dict[str, Any]]:
     return data["findTags"]["tags"]
 
 
+def find_root_tag_by_name(client: StashClient, name: str) -> dict[str, Any] | None:
+    data = client.request(
+        """
+        query FindRootTagByName($tagFilter: TagFilterType, $filter: FindFilterType) {
+          findTags(tag_filter: $tagFilter, filter: $filter) {
+            tags {
+              id
+              name
+              aliases
+              parent_count
+              children {
+                id
+                name
+                aliases
+                parent_count
+                children {
+                  id
+                  name
+                  aliases
+                  parent_count
+                  children {
+                    id
+                    name
+                    aliases
+                    parent_count
+                  }
+                }
+              }
+            }
+          }
+        }
+        """,
+        {
+            "tagFilter": {
+                "name": {"value": name, "modifier": "EQUALS"},
+                "parent_count": {"value": 0, "modifier": "EQUALS"},
+            },
+            "filter": {"per_page": -1},
+        },
+    )
+    tags = data["findTags"]["tags"]
+    return tags[0] if tags else None
+
+
 def find_galleries(client: StashClient) -> list[dict[str, Any]]:
     data = client.request(
         """
@@ -247,6 +291,23 @@ def update_gallery_tags(client: StashClient, gallery_id: str, tag_ids: list[str]
     return updated
 
 
+def bulk_update_gallery_tags(
+    client: StashClient, gallery_ids: list[str], tag_ids: list[str]
+) -> list[dict[str, Any]]:
+    data = client.request(
+        """
+        mutation BulkGalleryUpdate($input: BulkGalleryUpdateInput!) {
+          bulkGalleryUpdate(input: $input) {
+            id
+            title
+          }
+        }
+        """,
+        {"input": {"ids": gallery_ids, "tag_ids": {"ids": tag_ids, "mode": "SET"}}},
+    )
+    return data.get("bulkGalleryUpdate") or []
+
+
 def update_scene_tags(client: StashClient, scene_id: str, tag_ids: list[str]) -> dict[str, Any]:
     data = client.request(
         """
@@ -263,6 +324,23 @@ def update_scene_tags(client: StashClient, scene_id: str, tag_ids: list[str]) ->
     if not updated:
         raise RuntimeError(f"Failed to update scene: {scene_id}")
     return updated
+
+
+def bulk_update_scene_tags(
+    client: StashClient, scene_ids: list[str], tag_ids: list[str]
+) -> list[dict[str, Any]]:
+    data = client.request(
+        """
+        mutation BulkSceneUpdate($input: BulkSceneUpdateInput!) {
+          bulkSceneUpdate(input: $input) {
+            id
+            title
+          }
+        }
+        """,
+        {"input": {"ids": scene_ids, "tag_ids": {"ids": tag_ids, "mode": "SET"}}},
+    )
+    return data.get("bulkSceneUpdate") or []
 
 
 def update_performer_tags(
@@ -283,3 +361,20 @@ def update_performer_tags(
     if not updated:
         raise RuntimeError(f"Failed to update performer: {performer_id}")
     return updated
+
+
+def bulk_update_performer_tags(
+    client: StashClient, performer_ids: list[str], tag_ids: list[str]
+) -> list[dict[str, Any]]:
+    data = client.request(
+        """
+        mutation BulkPerformerUpdate($input: BulkPerformerUpdateInput!) {
+          bulkPerformerUpdate(input: $input) {
+            id
+            name
+          }
+        }
+        """,
+        {"input": {"ids": performer_ids, "tag_ids": {"ids": tag_ids, "mode": "SET"}}},
+    )
+    return data.get("bulkPerformerUpdate") or []

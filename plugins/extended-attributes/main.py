@@ -6,16 +6,18 @@ from urllib.error import HTTPError, URLError
 from plugin_runtime import emit_info, emit_progress, load_plugin_input, read_api_key
 from stash_api import (
     StashClient,
+    bulk_update_gallery_tags,
+    bulk_update_performer_tags,
+    bulk_update_scene_tags,
     find_galleries,
     find_gallery_by_id,
     find_performer_by_id,
     find_performers_with_rating,
-    find_root_tags,
     find_scene_by_id,
     find_scenes,
-    update_gallery_tags,
-    update_performer_tags,
-    update_scene_tags,
+)
+from stash_api import (
+    find_root_tag_by_name as find_root_tag_by_name_remote,
 )
 
 ROOT_TAG_NAMES = {
@@ -38,19 +40,6 @@ def normalize_name(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
-def find_root_tag_by_name(
-    root_tags: list[dict[str, Any]], expected_name: str
-) -> dict[str, Any] | None:
-    normalized_expected = normalize_name(expected_name)
-    for tag in root_tags:
-        if normalize_name(tag.get("name")) == normalized_expected:
-            return tag
-        for alias in tag.get("aliases") or []:
-            if normalize_name(str(alias)) == normalized_expected:
-                return tag
-    return None
-
-
 def collect_descendant_ids(tag: dict[str, Any]) -> set[str]:
     result = {str(tag["id"])}
     for child in tag.get("children") or []:
@@ -58,12 +47,14 @@ def collect_descendant_ids(tag: dict[str, Any]) -> set[str]:
     return result
 
 
-def load_attr_branches(client: StashClient) -> dict[str, dict[str, Any]]:
-    root_tags = find_root_tags(client)
+def load_attr_branches(
+    client: StashClient, entity_types: list[str]
+) -> dict[str, dict[str, Any]]:
     branches_by_type: dict[str, dict[str, Any]] = {}
 
-    for entity_type, root_name in ROOT_TAG_NAMES.items():
-        root = find_root_tag_by_name(root_tags, root_name)
+    for entity_type in entity_types:
+        root_name = ROOT_TAG_NAMES[entity_type]
+        root = find_root_tag_by_name_remote(client, root_name)
         if not root:
             raise RuntimeError(f"Missing required root tag: {root_name}")
 
@@ -90,8 +81,7 @@ def load_attr_branches(client: StashClient) -> dict[str, dict[str, Any]]:
             "attr_tag_ids": attr_tag_ids,
         }
         emit_info(
-            f"Loaded {len(branches)} attribute branches for {entity_type} "
-            f"from root id={root['id']}"
+            f"Loaded {len(branches)} attribute branches for {entity_type} from root id={root['id']}"
         )
 
     return branches_by_type
@@ -148,8 +138,8 @@ def apply_item_updates(
     progress_state: dict[str, int],
 ) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
+    plans: list[dict[str, Any]] = []
     checked = len(items)
-    updated = 0
     skipped = 0
     entity_total = len(items)
     total_items = progress_state["total"]
@@ -162,7 +152,6 @@ def apply_item_updates(
         allowed, reason = should_process_item(entity_type, item)
         if not allowed:
             skipped += 1
-            emit_info(f"{entity_type} id={item_id} skipped={reason}")
             progress_state["done"] += 1
             emit_progress(progress_state["done"] / total_items)
             continue
@@ -175,18 +164,7 @@ def apply_item_updates(
             progress_state["done"] += 1
             emit_progress(progress_state["done"] / total_items)
             continue
-
-        if not dry_run:
-            if entity_type == "gallery":
-                update_gallery_tags(client, item_id, next_tag_ids)
-            elif entity_type == "scene":
-                update_scene_tags(client, item_id, next_tag_ids)
-            elif entity_type == "performer":
-                update_performer_tags(client, item_id, next_tag_ids)
-            else:
-                raise RuntimeError(f"Unsupported entity type: {entity_type}")
-
-        updated += 1
+        plans.append({"id": item_id, "tag_ids": next_tag_ids})
         results.append(
             {
                 "id": item_id,
@@ -195,15 +173,51 @@ def apply_item_updates(
                 "dry_run": dry_run,
             }
         )
-        emit_info(
-            f"{entity_type} id={item_id} "
-            f"added_count={len(added_branch_ids)} "
-            f"kept_count={len(kept_branch_ids)}"
-        )
+        if dry_run:
+            emit_info(
+                f"{entity_type} id={item_id} "
+                f"added_count={len(added_branch_ids)} "
+                f"kept_count={len(kept_branch_ids)}"
+            )
         progress_state["done"] += 1
         emit_progress(progress_state["done"] / total_items)
 
-    return {"checked": checked, "updated": updated, "skipped": skipped, "results": results}
+    if dry_run:
+        return {
+            "checked": checked,
+            "updated": len(plans),
+            "skipped": skipped,
+            "results": results,
+            "bulk_groups": 0,
+        }
+
+    grouped_plans: dict[tuple[str, ...], list[str]] = {}
+    for plan in plans:
+        grouped_plans.setdefault(tuple(plan["tag_ids"]), []).append(plan["id"])
+
+    bulk_groups = len(grouped_plans)
+    for tag_ids_key, item_ids in grouped_plans.items():
+        tag_ids = list(tag_ids_key)
+        if entity_type == "gallery":
+            bulk_update_gallery_tags(client, item_ids, tag_ids)
+        elif entity_type == "scene":
+            bulk_update_scene_tags(client, item_ids, tag_ids)
+        elif entity_type == "performer":
+            bulk_update_performer_tags(client, item_ids, tag_ids)
+        else:
+            raise RuntimeError(f"Unsupported entity type: {entity_type}")
+        emit_info(
+            f"{entity_type} bulk_update items={len(item_ids)} "
+            f"tag_count={len(tag_ids)}"
+        )
+
+    return {
+        "checked": checked,
+        "updated": len(plans),
+        "skipped": skipped,
+        "results": results,
+        "bulk_groups": bulk_groups,
+    }
 
 
 def select_items_for_entity(
@@ -254,9 +268,8 @@ def run() -> dict[str, Any]:
         f"Starting Extended Attributes dry_run={dry_run} "
         f"entity_type={entity_type or 'all'} hook={bool(hook_context)}"
     )
-    attr_configs = load_attr_branches(client)
-
     entity_types = [entity_type] if entity_type else ["gallery", "scene", "performer"]
+    attr_configs = load_attr_branches(client, entity_types)
     output: dict[str, Any] = {"dry_run": dry_run}
     items_by_entity: dict[str, list[dict[str, Any]]] = {}
 

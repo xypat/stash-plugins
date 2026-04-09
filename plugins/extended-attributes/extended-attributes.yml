@@ -1,6 +1,6 @@
 name: Extended Attributes
 description: Rebuild standard extended attribute tags for gallery scene and performer items
-version: 0.1.0
+version: 0.1.1
 
 exec:
   - python3
