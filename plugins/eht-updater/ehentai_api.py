@@ -45,6 +45,7 @@ def fetch_ehentai(gid: int, token: str) -> tuple[dict[str, Any], list[str]]:
     logs: list[str] = []
     payload = {"method": "gdata", "gidlist": [[gid, token]], "namespace": 1}
     data = http_json("https://api.e-hentai.org/api.php", payload)
+    logs.append("Fetched metadata from the E-Hentai API")
     items = data.get("gmetadata") or []
     if len(items) != 1:
         raise RuntimeError(f"E-Hentai metadata not found: {gid}_{token}")
@@ -52,18 +53,21 @@ def fetch_ehentai(gid: int, token: str) -> tuple[dict[str, Any], list[str]]:
     meta = items[0]
     tags = meta.get("tags") or []
     if any(str(tag).startswith("language:") for tag in tags):
+        logs.append("Language tag was present in the E-Hentai API response")
         return meta, logs
 
+    logs.append("Language tag was missing in the API response; trying gallery page fallback")
     try:
         fallback = extract_gallery_language(gid, token)
     except (HTTPError, URLError, TimeoutError):
         fallback = None
-        logs.append(f"{gid}_{token} failed to fetch language from the gallery page fallback")
+        logs.append("Gallery page fallback request failed while resolving the language tag")
 
     if fallback:
         meta["tags"] = [fallback, *tags]
+        logs.append(f"Gallery page fallback resolved the language tag successfully: {fallback}")
     else:
-        logs.append(f"{gid}_{token} no language tag found; updating other metadata only")
+        logs.append("No language tag was found; the gallery will be updated without a language tag")
 
     return meta, logs
 

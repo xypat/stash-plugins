@@ -8,7 +8,15 @@ from constants import (
     LANGUAGE_ROOT_TAG_NAME,
 )
 from ehentai_api import fetch_ehentai, posted_to_date, resolve_audience_tag_name
-from plugin_runtime import bool_arg, normalize_tag_text, parse_gallery_dir, to_title_case
+from plugin_runtime import (
+    bool_arg,
+    emit_info,
+    emit_progress,
+    emit_warn,
+    normalize_tag_text,
+    parse_gallery_dir,
+    to_title_case,
+)
 from stash_api import (
     StashClient,
     create_tag,
@@ -169,13 +177,28 @@ def collect_language_tag_ids(language_tags: list[dict[str, Any]]) -> list[str]:
     return language_tag_ids
 
 
+def gallery_log_prefix(gallery: dict[str, Any], gid: int | None = None, token: str | None = None) -> str:
+    folder = (gallery.get("folder") or {}).get("path") or "<no-folder>"
+    gallery_id = gallery.get("id") or "<no-id>"
+    gid_token = f" gid_token={gid}_{token}" if gid is not None and token is not None else ""
+    return f"gallery_id={gallery_id} folder={folder}{gid_token}"
+
+
+def emit_gallery_logs(gallery: dict[str, Any], logs: list[str], gid: int, token: str) -> None:
+    prefix = gallery_log_prefix(gallery, gid, token)
+    for message in logs:
+        emit_info(f"{prefix} {message}")
+
+
 def resolve_audience_tag_id(
     client: StashClient,
     audience_root_tag: dict[str, Any],
     tags: list[str],
     dry_run: bool,
+    logs: list[str],
 ) -> str:
     target_name = resolve_audience_tag_name(tags)
+    logs.append(f"Audience tag resolved to {target_name}")
     return ensure_child_tag(client, audience_root_tag, target_name, dry_run)["id"]
 
 
@@ -189,6 +212,7 @@ def resolve_language_tag_id(
 ) -> str | None:
     matched = find_matching_language_tag(tags, language_tags)
     if matched:
+        logs.append(f"Matched existing language subtitle tag: {matched.get('name')}")
         return matched["id"]
 
     language_name = extract_language_name(tags)
@@ -213,6 +237,8 @@ def resolve_language_tag_id(
             for grandchild in language_parent.get("children") or []
         ]
         language_tags.append(language_parent)
+    else:
+        logs.append(f"Matched existing language parent tag: {language_parent.get('name')}")
 
     logs.append(f"Creating language subtitle tag: {subtitle_alias}")
     created_subtitle = create_tag(client, subtitle_alias, [language_parent["id"]], dry_run)
@@ -240,6 +266,7 @@ def sync_gallery_metadata(
     language_tags: list[dict[str, Any]],
     dry_run: bool,
 ) -> dict[str, Any]:
+    emit_info(f"{gallery_log_prefix(gallery, gid, token)} Starting metadata sync")
     meta, logs = fetch_ehentai(gid, token)
     language_tag_ids = collect_language_tag_ids(language_tags)
     language_leaf_tag_ids = {
@@ -258,7 +285,7 @@ def sync_gallery_metadata(
     }
 
     next_tag_ids.add(
-        resolve_audience_tag_id(client, audience_root_tag, meta.get("tags") or [], dry_run)
+        resolve_audience_tag_id(client, audience_root_tag, meta.get("tags") or [], dry_run, logs)
     )
     language_tag_id = resolve_language_tag_id(
         client=client,
@@ -270,8 +297,9 @@ def sync_gallery_metadata(
     )
     if language_tag_id:
         next_tag_ids.add(language_tag_id)
+        logs.append(f"Language subtitle tag resolved to id={language_tag_id}")
     elif not any(str(tag).startswith("language:") for tag in meta.get("tags") or []):
-        logs.append(f"{gid}_{token} no language tag matched; the gallery will still be marked organized")
+        logs.append("No language tag matched; the gallery will still be marked organized")
 
     payload = {
         "title": meta["title"],
@@ -283,6 +311,12 @@ def sync_gallery_metadata(
     }
 
     updated = update_gallery(client, gallery["id"], payload, dry_run)
+    emit_gallery_logs(gallery, logs, gid, token)
+    action = "Prepared dry-run update for" if dry_run else "Updated"
+    emit_info(
+        f"{gallery_log_prefix(gallery, gid, token)} {action} title={meta['title']} "
+        f"date={payload['date']} rating100={payload['rating100']} tags={len(payload['tag_ids'])}"
+    )
     return {
         "id": gallery["id"],
         "path": gallery["folder"]["path"],
@@ -306,14 +340,18 @@ def select_target_galleries(
         return find_galleries(client, path_contains, skip_organized)
 
     if hook_context.get("input") is not None:
+        emit_info("Hook invocation ignored because hookContext.input was present")
         return []
 
     gallery = find_gallery_by_id(client, str(hook_context["id"]))
     if not gallery:
+        emit_warn(f"Hook target gallery was not found: id={hook_context.get('id')}")
         return []
     if path_contains and path_contains not in (gallery.get("folder") or {}).get("path", ""):
+        emit_info(f"{gallery_log_prefix(gallery)} Hook target skipped because path filter did not match")
         return []
     if skip_organized and gallery.get("organized"):
+        emit_info(f"{gallery_log_prefix(gallery)} Hook target skipped because it is already organized")
         return []
     return [gallery]
 
@@ -354,8 +392,15 @@ def process_targets(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     results: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    total = len(targets)
 
-    for gallery, gid, token in targets:
+    if total == 0:
+        emit_progress(1.0)
+        emit_info("No eligible galleries to process")
+        return results, failed
+
+    emit_progress(0.0)
+    for index, (gallery, gid, token) in enumerate(targets, start=1):
         try:
             result = sync_gallery_metadata(
                 client=client,
@@ -371,6 +416,9 @@ def process_targets(
             results.append(result)
         except (HTTPError, URLError, TimeoutError, RuntimeError, ValueError, KeyError) as exc:
             folder = gallery.get("folder") or {}
+            emit_warn(
+                f"{gallery_log_prefix(gallery, gid, token)} Metadata sync failed: {exc}"
+            )
             failed.append(
                 {
                     "id": gallery["id"],
@@ -378,5 +426,6 @@ def process_targets(
                     "reason": str(exc),
                 }
             )
+        emit_progress(index / total)
 
     return results, failed

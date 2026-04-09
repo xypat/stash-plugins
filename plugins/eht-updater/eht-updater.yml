@@ -1,6 +1,6 @@
 name: E-Hentai Gallery Updater
 description: Populate gallery metadata from E-Hentai folder names and auto-create required tags
-version: 0.2.0
+version: 0.2.1
 
 exec:
   - python3

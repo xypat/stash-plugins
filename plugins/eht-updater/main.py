@@ -27,11 +27,21 @@ def run() -> dict[str, Any]:
     )
 
     dry_run = str(args.get("dry_run", "false")).strip().lower() == "true"
+    emit_info(
+        f"Starting E-Hentai Gallery Updater dry_run={dry_run} "
+        f"skip_organized={args.get('skip_organized', True)}"
+    )
     audience_root_tag, language_root_tag, language_tags, language_tag_ids = load_tag_taxonomy(
         client, dry_run
     )
     galleries = select_target_galleries(client, args)
+    emit_info(f"Loaded {len(galleries)} gallery candidates from Stash")
     targets, skipped = collect_targets(galleries)
+    emit_info(f"Selected {len(targets)} eligible galleries; {len(skipped)} galleries were skipped")
+    for item in skipped:
+        emit_info(
+            f"Skipped: gallery_id={item.get('id')} folder={item.get('path')} reason={item.get('reason')}"
+        )
     results, failed = process_targets(
         client=client,
         targets=targets,

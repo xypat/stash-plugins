@@ -10,6 +10,7 @@ GALLERY_DIR_RE = re.compile(r"^(?P<gid>\d+)_(?P<token>[a-f0-9]+)$")
 LOG_PREFIX = "\x01"
 LOG_SUFFIX = "\x02"
 LOG_LEVEL_INFO = "i"
+LOG_LEVEL_PROGRESS = "p"
 LOG_LEVEL_WARN = "w"
 
 
@@ -19,6 +20,11 @@ def emit_log(level: str, message: str) -> None:
 
 def emit_info(message: str) -> None:
     emit_log(LOG_LEVEL_INFO, message)
+
+
+def emit_progress(progress: float) -> None:
+    clamped = max(0.0, min(1.0, progress))
+    emit_log(LOG_LEVEL_PROGRESS, f"{clamped:.4f}")
 
 
 def emit_warn(message: str) -> None:
