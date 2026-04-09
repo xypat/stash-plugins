@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 GALLERY_DIR_RE = re.compile(r"^(?P<gid>\d+)_(?P<token>[a-f0-9]+)$")
 
 LOG_PREFIX = "\x01"

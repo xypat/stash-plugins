@@ -40,7 +40,10 @@ def run() -> dict[str, Any]:
     emit_info(f"Selected {len(targets)} eligible galleries; {len(skipped)} galleries were skipped")
     for item in skipped:
         emit_info(
-            f"Skipped: gallery_id={item.get('id')} folder={item.get('path')} reason={item.get('reason')}"
+            "Skipped: "
+            f"gallery_id={item.get('id')} "
+            f"folder={item.get('path')} "
+            f"reason={item.get('reason')}"
         )
     results, failed = process_targets(
         client=client,
@@ -80,7 +83,10 @@ def main() -> None:
     emit_info(f"Task finished: {success} succeeded, {len(skipped)} skipped, {len(failed)} failed")
     for item in failed:
         emit_warn(
-            f"Failed: gallery_id={item.get('id')} folder={item.get('path')} reason={item.get('reason')}"
+            "Failed: "
+            f"gallery_id={item.get('id')} "
+            f"folder={item.get('path')} "
+            f"reason={item.get('reason')}"
         )
 
     print(json.dumps(result, ensure_ascii=False))

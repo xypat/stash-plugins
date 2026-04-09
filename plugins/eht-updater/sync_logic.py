@@ -72,7 +72,8 @@ def ensure_child_tag(
         return child
 
     raise RuntimeError(
-        f"Child tag not found and cannot be created in dry-run mode: {child_name} (parent: {parent.get('name')})"
+        "Child tag not found and cannot be created in dry-run mode: "
+        f"{child_name} (parent: {parent.get('name')})"
     )
 
 
@@ -177,7 +178,11 @@ def collect_language_tag_ids(language_tags: list[dict[str, Any]]) -> list[str]:
     return language_tag_ids
 
 
-def gallery_log_prefix(gallery: dict[str, Any], gid: int | None = None, token: str | None = None) -> str:
+def gallery_log_prefix(
+    gallery: dict[str, Any],
+    gid: int | None = None,
+    token: str | None = None,
+) -> str:
     folder = (gallery.get("folder") or {}).get("path") or "<no-folder>"
     gallery_id = gallery.get("id") or "<no-id>"
     gid_token = f" gid_token={gid}_{token}" if gid is not None and token is not None else ""
@@ -348,10 +353,14 @@ def select_target_galleries(
         emit_warn(f"Hook target gallery was not found: id={hook_context.get('id')}")
         return []
     if path_contains and path_contains not in (gallery.get("folder") or {}).get("path", ""):
-        emit_info(f"{gallery_log_prefix(gallery)} Hook target skipped because path filter did not match")
+        emit_info(
+            f"{gallery_log_prefix(gallery)} Hook target skipped because path filter did not match"
+        )
         return []
     if skip_organized and gallery.get("organized"):
-        emit_info(f"{gallery_log_prefix(gallery)} Hook target skipped because it is already organized")
+        emit_info(
+            f"{gallery_log_prefix(gallery)} Hook target skipped because it is already organized"
+        )
         return []
     return [gallery]
 
@@ -416,9 +425,7 @@ def process_targets(
             results.append(result)
         except (HTTPError, URLError, TimeoutError, RuntimeError, ValueError, KeyError) as exc:
             folder = gallery.get("folder") or {}
-            emit_warn(
-                f"{gallery_log_prefix(gallery, gid, token)} Metadata sync failed: {exc}"
-            )
+            emit_warn(f"{gallery_log_prefix(gallery, gid, token)} Metadata sync failed: {exc}")
             failed.append(
                 {
                     "id": gallery["id"],

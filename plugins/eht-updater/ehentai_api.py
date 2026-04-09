@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html import unescape
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -73,7 +73,7 @@ def fetch_ehentai(gid: int, token: str) -> tuple[dict[str, Any], list[str]]:
 
 
 def posted_to_date(posted: Any) -> str:
-    return datetime.fromtimestamp(int(posted), tz=timezone.utc).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(int(posted), tz=UTC).strftime("%Y-%m-%d")
 
 
 def resolve_audience_tag_name(tags: list[str]) -> str:
