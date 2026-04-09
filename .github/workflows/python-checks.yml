@@ -1,0 +1,38 @@
+name: Python Checks
+
+on:
+  push:
+    paths:
+      - ".github/workflows/python-checks.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**/*.py"
+      - "plugins/**/*.py"
+  pull_request:
+    paths:
+      - ".github/workflows/python-checks.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**/*.py"
+      - "plugins/**/*.py"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: Lint
+        run: uv run lint

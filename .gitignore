@@ -9,6 +9,9 @@ venv/
 env/
 ENV/
 
+# Local environment files
+.env
+
 # Tooling caches
 .pytest_cache/
 .mypy_cache/
@@ -23,3 +26,6 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+
+# Generated schema
+schema.graphql
