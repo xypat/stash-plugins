@@ -1,0 +1,64 @@
+name: Extended Attributes
+description: Rebuild standard extended attribute tags for gallery scene and performer items
+version: 0.1.0
+
+exec:
+  - python3
+  - "{pluginDir}/main.py"
+
+interface: raw
+errLog: info
+
+tasks:
+  - name: Full Rebuild
+    description: Recheck gallery scene and performer attribute branches and rebuild standard tags
+    defaultArgs:
+      dry_run: false
+  - name: Dry Run
+    description: Check gallery scene and performer attribute branches without updating anything
+    defaultArgs:
+      dry_run: true
+
+hooks:
+  - name: Gallery Create
+    description: Rebuild standard gallery attribute tags after gallery create
+    triggeredBy:
+      - Gallery.Create.Post
+    defaultArgs:
+      dry_run: false
+      entity_type: gallery
+  - name: Gallery Update
+    description: Rebuild standard gallery attribute tags after gallery update
+    triggeredBy:
+      - Gallery.Update.Post
+    defaultArgs:
+      dry_run: false
+      entity_type: gallery
+  - name: Scene Create
+    description: Rebuild standard scene attribute tags after scene create
+    triggeredBy:
+      - Scene.Create.Post
+    defaultArgs:
+      dry_run: false
+      entity_type: scene
+  - name: Scene Update
+    description: Rebuild standard scene attribute tags after scene update
+    triggeredBy:
+      - Scene.Update.Post
+    defaultArgs:
+      dry_run: false
+      entity_type: scene
+  - name: Performer Create
+    description: Rebuild standard performer attribute tags after performer create
+    triggeredBy:
+      - Performer.Create.Post
+    defaultArgs:
+      dry_run: false
+      entity_type: performer
+  - name: Performer Update
+    description: Rebuild standard performer attribute tags after performer update
+    triggeredBy:
+      - Performer.Update.Post
+    defaultArgs:
+      dry_run: false
+      entity_type: performer
