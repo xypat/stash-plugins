@@ -1,0 +1,37 @@
+name: E-Hentai Gallery Updater
+description: Populate gallery metadata from E-Hentai folder names and auto-create required tags
+version: 0.2.0
+
+exec:
+  - python3
+  - "{pluginDir}/main.py"
+
+interface: raw
+errLog: info
+
+tasks:
+  - name: Update Unorganized Galleries
+    description: Update only unorganized E-Hentai galleries
+    defaultArgs:
+      dry_run: false
+      skip_organized: true
+  - name: Force Update All
+    description: Overwrite metadata for all matching E-Hentai galleries
+    defaultArgs:
+      dry_run: false
+      skip_organized: false
+  - name: Preview Update
+    description: Show the planned metadata changes without writing them
+    defaultArgs:
+      dry_run: true
+      skip_organized: true
+
+hooks:
+  - name: Auto Update After Scan
+    description: Auto-populate E-Hentai metadata after gallery create and update scan events
+    triggeredBy:
+      - Gallery.Create.Post
+      - Gallery.Update.Post
+    defaultArgs:
+      dry_run: false
+      skip_organized: true
