@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -34,6 +35,9 @@ def load_plugin_input() -> dict[str, Any]:
 
 
 def read_api_key(config_dir: str | None) -> str | None:
+    environment_key = os.getenv("STASH_KEY")
+    if environment_key:
+        return environment_key
     if not config_dir:
         return None
 

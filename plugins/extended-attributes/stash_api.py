@@ -45,9 +45,10 @@ class StashClient:
         return data["data"]
 
 
-def _normalize_tag_ids(item: dict[str, Any]) -> dict[str, Any]:
+def _normalize_item(item: dict[str, Any], paths: list[str | None] | None = None) -> dict[str, Any]:
     normalized = dict(item)
     normalized["tag_ids"] = [str(tag["id"]) for tag in item.get("tags") or []]
+    normalized["paths"] = [path for path in paths or [] if path]
     return normalized
 
 
@@ -60,21 +61,25 @@ def find_root_tags(client: StashClient) -> list[dict[str, Any]]:
               id
               name
               aliases
+              custom_fields
               parent_count
               children {
                 id
                 name
                 aliases
+                custom_fields
                 parent_count
                 children {
                   id
                   name
                   aliases
+                  custom_fields
                   parent_count
                   children {
                     id
                     name
                     aliases
+                    custom_fields
                     parent_count
                   }
                 }
@@ -100,21 +105,25 @@ def find_root_tag_by_name(client: StashClient, name: str) -> dict[str, Any] | No
               id
               name
               aliases
+              custom_fields
               parent_count
               children {
                 id
                 name
                 aliases
+                custom_fields
                 parent_count
                 children {
                   id
                   name
                   aliases
+                  custom_fields
                   parent_count
                   children {
                     id
                     name
                     aliases
+                    custom_fields
                     parent_count
                   }
                 }
@@ -135,6 +144,41 @@ def find_root_tag_by_name(client: StashClient, name: str) -> dict[str, Any] | No
     return tags[0] if tags else None
 
 
+def find_tag_by_id(client: StashClient, tag_id: str) -> dict[str, Any] | None:
+    data = client.request(
+        """
+        query FindTag($id: ID!) {
+          findTag(id: $id) {
+            id
+            name
+            aliases
+            custom_fields
+            children {
+              id
+              name
+              aliases
+              custom_fields
+              children {
+                id
+                name
+                aliases
+                custom_fields
+                children {
+                  id
+                  name
+                  aliases
+                  custom_fields
+                }
+              }
+            }
+          }
+        }
+        """,
+        {"id": tag_id},
+    )
+    return data.get("findTag")
+
+
 def find_galleries(client: StashClient) -> list[dict[str, Any]]:
     data = client.request(
         """
@@ -143,6 +187,12 @@ def find_galleries(client: StashClient) -> list[dict[str, Any]]:
             galleries {
               id
               title
+              folder {
+                path
+              }
+              files {
+                path
+              }
               tags {
                 id
                 name
@@ -153,7 +203,16 @@ def find_galleries(client: StashClient) -> list[dict[str, Any]]:
         """,
         {"filter": {"per_page": -1}},
     )
-    return [_normalize_tag_ids(item) for item in data["findGalleries"]["galleries"]]
+    return [
+        _normalize_item(
+            item,
+            [
+                (item.get("folder") or {}).get("path"),
+                *(file.get("path") for file in item.get("files") or []),
+            ],
+        )
+        for item in data["findGalleries"]["galleries"]
+    ]
 
 
 def find_gallery_by_id(client: StashClient, gallery_id: str) -> dict[str, Any] | None:
@@ -163,6 +222,12 @@ def find_gallery_by_id(client: StashClient, gallery_id: str) -> dict[str, Any] |
           findGallery(id: $id) {
             id
             title
+            folder {
+              path
+            }
+            files {
+              path
+            }
             tags {
               id
               name
@@ -173,20 +238,69 @@ def find_gallery_by_id(client: StashClient, gallery_id: str) -> dict[str, Any] |
         {"id": gallery_id},
     )
     gallery = data.get("findGallery")
-    return _normalize_tag_ids(gallery) if gallery else None
+    if not gallery:
+        return None
+    return _normalize_item(
+        gallery,
+        [
+            (gallery.get("folder") or {}).get("path"),
+            *(file.get("path") for file in gallery.get("files") or []),
+        ],
+    )
 
 
-def find_scenes(client: StashClient) -> list[dict[str, Any]]:
+def find_groups(client: StashClient) -> list[dict[str, Any]]:
     data = client.request(
         """
-        query FindScenes($filter: FindFilterType) {
-          findScenes(filter: $filter) {
-            scenes {
+        query FindGroups($filter: FindFilterType) {
+          findGroups(filter: $filter) {
+            groups {
+              id
+              name
+              tags {
+                id
+                name
+              }
+            }
+          }
+        }
+        """,
+        {"filter": {"per_page": -1}},
+    )
+    return [_normalize_item(item) for item in data["findGroups"]["groups"]]
+
+
+def find_group_by_id(client: StashClient, group_id: str) -> dict[str, Any] | None:
+    data = client.request(
+        """
+        query FindGroup($id: ID!) {
+          findGroup(id: $id) {
+            id
+            name
+            tags {
+              id
+              name
+            }
+          }
+        }
+        """,
+        {"id": group_id},
+    )
+    group = data.get("findGroup")
+    return _normalize_item(group) if group else None
+
+
+def find_images(client: StashClient) -> list[dict[str, Any]]:
+    data = client.request(
+        """
+        query FindImages($filter: FindFilterType) {
+          findImages(filter: $filter) {
+            images {
               id
               title
-              groups {
-                group {
-                  id
+              visual_files {
+                ... on ImageFile {
+                  path
                 }
               }
               tags {
@@ -199,7 +313,70 @@ def find_scenes(client: StashClient) -> list[dict[str, Any]]:
         """,
         {"filter": {"per_page": -1}},
     )
-    return [_normalize_tag_ids(item) for item in data["findScenes"]["scenes"]]
+    return [
+        _normalize_item(
+            item,
+            [file.get("path") for file in item.get("visual_files") or []],
+        )
+        for item in data["findImages"]["images"]
+    ]
+
+
+def find_image_by_id(client: StashClient, image_id: str) -> dict[str, Any] | None:
+    data = client.request(
+        """
+        query FindImage($id: ID!) {
+          findImage(id: $id) {
+            id
+            title
+            visual_files {
+              ... on ImageFile {
+                path
+              }
+            }
+            tags {
+              id
+              name
+            }
+          }
+        }
+        """,
+        {"id": image_id},
+    )
+    image = data.get("findImage")
+    if not image:
+        return None
+    return _normalize_item(
+        image,
+        [file.get("path") for file in image.get("visual_files") or []],
+    )
+
+
+def find_scenes(client: StashClient) -> list[dict[str, Any]]:
+    data = client.request(
+        """
+        query FindScenes($filter: FindFilterType) {
+          findScenes(filter: $filter) {
+            scenes {
+              id
+              title
+              files {
+                path
+              }
+              tags {
+                id
+                name
+              }
+            }
+          }
+        }
+        """,
+        {"filter": {"per_page": -1}},
+    )
+    return [
+        _normalize_item(item, [file.get("path") for file in item.get("files") or []])
+        for item in data["findScenes"]["scenes"]
+    ]
 
 
 def find_scene_by_id(client: StashClient, scene_id: str) -> dict[str, Any] | None:
@@ -209,10 +386,8 @@ def find_scene_by_id(client: StashClient, scene_id: str) -> dict[str, Any] | Non
           findScene(id: $id) {
             id
             title
-            groups {
-              group {
-                id
-              }
+            files {
+              path
             }
             tags {
               id
@@ -224,14 +399,18 @@ def find_scene_by_id(client: StashClient, scene_id: str) -> dict[str, Any] | Non
         {"id": scene_id},
     )
     scene = data.get("findScene")
-    return _normalize_tag_ids(scene) if scene else None
+    return (
+        _normalize_item(scene, [file.get("path") for file in scene.get("files") or []])
+        if scene
+        else None
+    )
 
 
-def find_performers_with_rating(client: StashClient) -> list[dict[str, Any]]:
+def find_performers(client: StashClient) -> list[dict[str, Any]]:
     data = client.request(
         """
-        query FindPerformers($performerFilter: PerformerFilterType, $filter: FindFilterType) {
-          findPerformers(performer_filter: $performerFilter, filter: $filter) {
+        query FindPerformers($filter: FindFilterType) {
+          findPerformers(filter: $filter) {
             performers {
               id
               name
@@ -244,12 +423,9 @@ def find_performers_with_rating(client: StashClient) -> list[dict[str, Any]]:
           }
         }
         """,
-        {
-            "performerFilter": {"rating100": {"value": 20, "modifier": "GREATER_THAN"}},
-            "filter": {"per_page": -1},
-        },
+        {"filter": {"per_page": -1}},
     )
-    return [_normalize_tag_ids(item) for item in data["findPerformers"]["performers"]]
+    return [_normalize_item(item) for item in data["findPerformers"]["performers"]]
 
 
 def find_performer_by_id(client: StashClient, performer_id: str) -> dict[str, Any] | None:
@@ -270,7 +446,7 @@ def find_performer_by_id(client: StashClient, performer_id: str) -> dict[str, An
         {"id": performer_id},
     )
     performer = data.get("findPerformer")
-    return _normalize_tag_ids(performer) if performer else None
+    return _normalize_item(performer) if performer else None
 
 
 def update_gallery_tags(client: StashClient, gallery_id: str, tag_ids: list[str]) -> dict[str, Any]:
@@ -306,6 +482,40 @@ def bulk_update_gallery_tags(
         {"input": {"ids": gallery_ids, "tag_ids": {"ids": tag_ids, "mode": "SET"}}},
     )
     return data.get("bulkGalleryUpdate") or []
+
+
+def bulk_update_group_tags(
+    client: StashClient, group_ids: list[str], tag_ids: list[str]
+) -> list[dict[str, Any]]:
+    data = client.request(
+        """
+        mutation BulkGroupUpdate($input: BulkGroupUpdateInput!) {
+          bulkGroupUpdate(input: $input) {
+            id
+            name
+          }
+        }
+        """,
+        {"input": {"ids": group_ids, "tag_ids": {"ids": tag_ids, "mode": "SET"}}},
+    )
+    return data.get("bulkGroupUpdate") or []
+
+
+def bulk_update_image_tags(
+    client: StashClient, image_ids: list[str], tag_ids: list[str]
+) -> list[dict[str, Any]]:
+    data = client.request(
+        """
+        mutation BulkImageUpdate($input: BulkImageUpdateInput!) {
+          bulkImageUpdate(input: $input) {
+            id
+            title
+          }
+        }
+        """,
+        {"input": {"ids": image_ids, "tag_ids": {"ids": tag_ids, "mode": "SET"}}},
+    )
+    return data.get("bulkImageUpdate") or []
 
 
 def update_scene_tags(client: StashClient, scene_id: str, tag_ids: list[str]) -> dict[str, Any]:
