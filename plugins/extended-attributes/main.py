@@ -179,33 +179,45 @@ def rebuild_attr_tag_ids(
     paths = [str(path) for path in item.get("paths") or [] if path]
     path_matched_ids = find_path_matched_tag_ids(paths, type_config["all_nodes"])
 
-    # Attribute enforcement requires an explicit or path-matched subtype.
-    active_subtype_ids = type_config["subtype_ids"] & (current_tag_ids | path_matched_ids)
-    if not active_subtype_ids:
+    # An explicit subtype overrides directory defaults. Each root permits one subtype only.
+    explicit_subtype_ids = type_config["subtype_ids"] & current_tag_ids
+    path_subtype_ids = type_config["subtype_ids"] & path_matched_ids
+    candidate_subtype_ids = explicit_subtype_ids or path_subtype_ids
+    if not candidate_subtype_ids:
         return sorted(current_tag_ids, key=int), [], [], False, [], []
 
+    active_subtype_id = choose_single_value(candidate_subtype_ids, preferred_tag_ids)
+    active_subtype_ids = {active_subtype_id}
     next_tag_ids = set(current_tag_ids)
     next_tag_ids.update(active_subtype_ids)
+    next_tag_ids.difference_update(type_config["subtype_ids"] - active_subtype_ids)
     added_branch_ids: list[str] = []
     kept_branch_ids: list[str] = []
     resolved_conflicts: list[dict[str, Any]] = []
 
-    active_subtypes = [
-        subtype for subtype in type_config["subtypes"] if subtype["id"] in active_subtype_ids
-    ]
-    active_descendant_ids = set().union(*(subtype["descendant_ids"] for subtype in active_subtypes))
+    if len(candidate_subtype_ids) > 1:
+        resolved_conflicts.append(
+            {
+                "kind": "subtype",
+                "kept_subtype_id": active_subtype_id,
+                "removed_subtype_ids": sorted(
+                    candidate_subtype_ids - active_subtype_ids,
+                    key=int,
+                ),
+            }
+        )
+
+    active_subtype = next(
+        subtype for subtype in type_config["subtypes"] if subtype["id"] == active_subtype_id
+    )
+    active_descendant_ids = active_subtype["descendant_ids"]
     if strict:
         allowed_managed_ids = active_subtype_ids | active_descendant_ids
         disallowed_managed_ids = type_config["managed_tag_ids"] - allowed_managed_ids
         next_tag_ids.difference_update(disallowed_managed_ids)
     next_tag_ids.update(path_matched_ids & active_descendant_ids)
 
-    attributes_by_id: dict[str, dict[str, Any]] = {}
-    for subtype in active_subtypes:
-        for attribute in subtype["children"]:
-            attributes_by_id[attribute["id"]] = attribute
-
-    for attribute in attributes_by_id.values():
+    for attribute in active_subtype["children"]:
         branch_ids = next_tag_ids & attribute["descendant_ids"]
         value_ids = find_selected_leaf_ids(branch_ids, attribute)
         next_tag_ids.difference_update(branch_ids)
@@ -220,6 +232,7 @@ def rebuild_attr_tag_ids(
             if len(value_ids) > 1:
                 resolved_conflicts.append(
                     {
+                        "kind": "attribute",
                         "attribute_id": attribute["id"],
                         "kept_value_id": kept_value_id,
                         "removed_value_ids": sorted(value_ids - {kept_value_id}, key=int),

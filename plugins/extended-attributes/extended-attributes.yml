@@ -1,6 +1,6 @@
 name: Extended Attributes
-description: Enforce subtype-specific shared attributes and path-based tag assignment
-version: 0.2.0
+description: Enforce single-subtype attribute schemas and path-based defaults
+version: 0.2.1
 
 exec:
   - python3
