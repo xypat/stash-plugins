@@ -1,6 +1,6 @@
 name: Compress Performer Covers
 description: Compress oversized performer covers to AVIF with Stash's FFmpeg
-version: 0.2.0
+version: 0.3.0
 url: https://github.com/xypat/stash-plugins
 
 exec:
@@ -12,24 +12,24 @@ errLog: info
 
 settings:
   target_kb:
-    displayName: Target size (KiB)
-    description: Covers at or below this size are skipped
+    displayName: Target size (KiB, default 100)
+    description: Covers at or below this size are skipped; built-in default is 100
     type: NUMBER
   max_width:
-    displayName: Maximum width
-    description: Covers wider than this value are resized before encoding
+    displayName: Maximum width (default 720)
+    description: Covers wider than this value are resized; built-in default is 720
     type: NUMBER
   min_quality:
-    displayName: Minimum quality
-    description: Lowest allowed AVIF quality from 1 to 95
+    displayName: Minimum quality (default 60)
+    description: Lowest allowed AVIF quality from 1 to 95; built-in default is 60
     type: NUMBER
   concurrency:
-    displayName: Concurrency
-    description: Number of covers processed at the same time
+    displayName: Concurrency (default 3)
+    description: Number of covers processed at the same time; built-in default is 3
     type: NUMBER
   limit:
-    displayName: Performer limit
-    description: Maximum performers to inspect; 0 means all
+    displayName: Performer limit (default 0)
+    description: Maximum performers to inspect; built-in default 0 means all
     type: NUMBER
   ffmpeg_path:
     displayName: FFmpeg path override
@@ -37,6 +37,10 @@ settings:
     type: STRING
 
 tasks:
+  - name: Reset settings to defaults
+    description: Save the built-in defaults so their actual values appear in the plugin UI
+    defaultArgs:
+      reset_settings: true
   - name: Preview compression
     description: Inspect and compress covers without writing changes to Stash
     defaultArgs:

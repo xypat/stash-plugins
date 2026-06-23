@@ -122,6 +122,21 @@ def get_runtime_config(client: StashClient) -> dict[str, Any]:
     }
 
 
+def configure_plugin(client: StashClient, settings: dict[str, Any]) -> dict[str, Any]:
+    data = client.request(
+        """
+        mutation ConfigurePlugin($pluginId: ID!, $input: Map!) {
+          configurePlugin(plugin_id: $pluginId, input: $input)
+        }
+        """,
+        {"pluginId": PLUGIN_ID, "input": settings},
+    )
+    configured = data.get("configurePlugin")
+    if configured is None:
+        raise RuntimeError("Failed to save plugin settings")
+    return configured
+
+
 def update_performer_image(client: StashClient, performer_id: str, data_url: str) -> None:
     data = client.request(
         """

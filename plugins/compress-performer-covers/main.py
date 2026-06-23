@@ -22,6 +22,7 @@ from plugin_runtime import (
 )
 from stash_api import (
     StashClient,
+    configure_plugin,
     find_performer,
     find_performers,
     get_runtime_config,
@@ -32,6 +33,16 @@ DEFAULT_TARGET_KB = 100
 DEFAULT_MAX_WIDTH = 720
 DEFAULT_MIN_QUALITY = 60
 DEFAULT_CONCURRENCY = 3
+DEFAULT_LIMIT = 0
+
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "target_kb": DEFAULT_TARGET_KB,
+    "max_width": DEFAULT_MAX_WIDTH,
+    "min_quality": DEFAULT_MIN_QUALITY,
+    "concurrency": DEFAULT_CONCURRENCY,
+    "limit": DEFAULT_LIMIT,
+    "ffmpeg_path": "",
+}
 
 
 @dataclass(frozen=True)
@@ -99,7 +110,7 @@ def load_options(args: dict[str, Any], settings: dict[str, Any]) -> Options:
         max_width=parse_int(settings, "max_width", DEFAULT_MAX_WIDTH, 160),
         min_quality=parse_int(settings, "min_quality", DEFAULT_MIN_QUALITY, 1, MAX_QUALITY),
         concurrency=parse_int(settings, "concurrency", DEFAULT_CONCURRENCY, 1, 16),
-        limit=parse_int(settings, "limit", 0, 0),
+        limit=parse_int(settings, "limit", DEFAULT_LIMIT, 0),
         ffmpeg_path=ffmpeg_path,
     )
 
@@ -193,6 +204,16 @@ def run() -> dict[str, Any]:
         api_key=read_api_key(server_connection.get("Dir")),
         session_cookie=server_connection.get("SessionCookie"),
     )
+
+    if parse_bool(args.get("reset_settings")):
+        saved_settings = configure_plugin(client, DEFAULT_SETTINGS)
+        emit_info("Plugin settings were reset to their built-in defaults")
+        return {
+            "error": None,
+            "output": {
+                "settings": saved_settings,
+            },
+        }
 
     runtime = get_runtime_config(client)
     options = load_options(args, runtime["settings"])
