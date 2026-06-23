@@ -1,0 +1,55 @@
+name: Compress Performer Covers
+description: Compress oversized performer covers to AVIF with Stash's FFmpeg
+version: 0.2.0
+url: https://github.com/xypat/stash-plugins
+
+exec:
+  - python3
+  - "{pluginDir}/main.py"
+
+interface: raw
+errLog: info
+
+settings:
+  target_kb:
+    displayName: Target size (KiB)
+    description: Covers at or below this size are skipped
+    type: NUMBER
+  max_width:
+    displayName: Maximum width
+    description: Covers wider than this value are resized before encoding
+    type: NUMBER
+  min_quality:
+    displayName: Minimum quality
+    description: Lowest allowed AVIF quality from 1 to 95
+    type: NUMBER
+  concurrency:
+    displayName: Concurrency
+    description: Number of covers processed at the same time
+    type: NUMBER
+  limit:
+    displayName: Performer limit
+    description: Maximum performers to inspect; 0 means all
+    type: NUMBER
+  ffmpeg_path:
+    displayName: FFmpeg path override
+    description: Leave empty to use the FFmpeg configured in Stash
+    type: STRING
+
+tasks:
+  - name: Preview compression
+    description: Inspect and compress covers without writing changes to Stash
+    defaultArgs:
+      apply: false
+  - name: Compress performer covers
+    description: Compress oversized covers to AVIF and write them back to Stash
+    defaultArgs:
+      apply: true
+
+hooks:
+  - name: Compress updated performer cover
+    description: Compress a performer cover after the image field is updated
+    triggeredBy:
+      - Performer.Update.Post
+    defaultArgs:
+      apply: true
