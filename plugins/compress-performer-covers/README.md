@@ -13,11 +13,6 @@ Default behavior:
 - Quality is prioritized; when quality would fall below 75, dimensions are reduced gradually
 - The minimum dimension is 160 px
 
-Stash does not support declaring default plugin setting values in a plugin YAML file. Unset numeric
-settings therefore appear as `0` in the stock plugin UI even though this plugin uses the built-in
-defaults listed above. Run `Reset settings to defaults` once to persist those values and make the
-actual defaults appear in the UI.
-
 ## Runtime requirements
 
 The plugin uses only the Python standard library. AVIF encoding is performed by the FFmpeg and
@@ -37,19 +32,9 @@ sharp. This avoids maintaining native dependencies for each operating system and
 ## Usage
 
 1. Adjust settings under `Settings -> Plugins -> Installed Plugins` if needed.
-2. Optionally run `Reset settings to defaults` to save and display all built-in defaults.
-3. Run `Preview compression` from `Settings -> Tasks -> Plugin Tasks`.
-4. Review the compression results in the task log.
-5. Run `Compress performer covers` to write the compressed covers to Stash.
-
-The reset task replaces this plugin's complete settings map with:
-
-- Target size: `100`
-- Maximum width: `720`
-- Minimum quality: `60`
-- Concurrency: `3`
-- Performer limit: `0`
-- FFmpeg path override: empty
+2. Run `Preview compression` from `Settings -> Tasks -> Plugin Tasks`.
+3. Review the compression results in the task log.
+4. Run `Compress performer covers` to write the compressed covers to Stash.
 
 Set `Performer limit` to `0` to process all performers. The preview task performs real AVIF
 encoding but does not call the update mutation, so it can also verify the local FFmpeg build and
