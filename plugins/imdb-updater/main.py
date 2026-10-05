@@ -2,17 +2,17 @@ import json
 import re
 import sys
 import tempfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.error import HTTPError, URLError
 
-from constants import MOVIE_GROUP_NAME, ROOT_GROUP_NAME, TV_GROUP_NAME
 from imdb_episodes import Episode, load_episodes
 from plugin_runtime import emit_info, emit_progress, emit_warn, load_plugin_input, read_api_key
 from stash_api import (
     StashClient,
     create_group,
+    find_entry_group_categories,
     find_groups,
     find_scenes,
     scrape_group_url,
@@ -59,6 +59,8 @@ class SceneEntry(NamedTuple):
     folder: str
     file_name: str
     episode_key: tuple[int, int] | None
+    root_name: str
+    category_name: str
 
 
 def parse_episode(file_name: str) -> tuple[int, int] | None:
@@ -71,11 +73,17 @@ def parse_episode(file_name: str) -> tuple[int, int] | None:
 
 
 def find_imdb_entry(scene: dict[str, Any]) -> tuple[str, SceneEntry] | None:
+    # 目录约定：<根目录>/<分类目录>/<作品> [imdbid=ttXXXX]/…
     for file in scene["files"]:
-        *folders, file_name = re.split(r"[\\/]", file["path"])
-        for folder in folders:
+        *parts, file_name = re.split(r"[\\/]", file["path"])
+        folders = [part for part in parts if part]
+        for index, folder in enumerate(folders[2:], start=2):
             if match := IMDB_ID_RE.search(folder):
-                return match[1], SceneEntry(scene, folder, file_name, parse_episode(file_name))
+                root_name, category_name = folders[index - 2 : index]
+                episode_key = parse_episode(file_name)
+                return match[1], SceneEntry(
+                    scene, folder, file_name, episode_key, root_name, category_name
+                )
     return None
 
 
@@ -109,18 +117,35 @@ def ensure_named_group(
     return created["id"]
 
 
+def find_category_id(client: StashClient, root_name: str, category_name: str) -> str | None:
+    """从已有数据推断：同一分类目录下，已有作品最多的那个上级 Group。"""
+    path_regex = rf"[\\/]{re.escape(root_name)}[\\/]{re.escape(category_name)}[\\/]"
+    category_by_entry_id = {
+        group["id"]: group["containing_groups"][0]["group"]["id"]
+        for scene in find_entry_group_categories(client, path_regex)
+        for item in scene["groups"]
+        if (group := item["group"])["containing_groups"]
+    }
+    if not category_by_entry_id:
+        return None
+    return Counter(category_by_entry_id.values()).most_common(1)[0][0]
+
+
 def ensure_entry_group(
-    client: StashClient, imdb_id: str, folder: str, is_tv: bool, dry_run: bool
+    client: StashClient, imdb_id: str, entry: SceneEntry, dry_run: bool
 ) -> str | None:
     url = imdb_url(imdb_id)
-    existing = find_groups(client, {"url": {"value": url, "modifier": "EQUALS"}})
+    # 已有 Group 的链接可能缺少末尾斜杠，所以按 IMDb ID 匹配，而不是精确比较。
+    url_regex = rf"imdb\.com/title/{imdb_id}(?:[/?#]|$)"
+    existing = find_groups(client, {"url": {"value": url_regex, "modifier": "MATCHES_REGEX"}})
     if existing:
         return existing[0]["id"]
 
-    root_id = ensure_named_group(client, ROOT_GROUP_NAME, None, dry_run)
-    category_id = ensure_named_group(
-        client, TV_GROUP_NAME if is_tv else MOVIE_GROUP_NAME, root_id, dry_run
-    )
+    # 根 Group 和分类 Group 沿用目录名，已有的分类（如被你改过名的）优先。
+    root_id = ensure_named_group(client, entry.root_name, None, dry_run)
+    category_id = find_category_id(client, entry.root_name, entry.category_name)
+    if category_id is None:
+        category_id = ensure_named_group(client, entry.category_name, root_id, dry_run)
     if dry_run:
         emit_info(f"Would create entry group from {url}")
         return None
@@ -132,7 +157,7 @@ def ensure_entry_group(
         emit_warn(f"Group scrape failed, creating it from the folder name: {url} ({exc})")
 
     group_input = {field: scraped[field] for field in GROUP_SCRAPED_FIELDS if scraped.get(field)}
-    group_input.setdefault("name", fallback_group_name(folder))
+    group_input.setdefault("name", fallback_group_name(entry.folder))
     group_input["urls"] = scraped.get("urls") or [url]
     group_input["containing_groups"] = [{"group_id": category_id}]
     created = create_group(client, group_input)
@@ -187,8 +212,7 @@ def sync_series(
     dry_run: bool,
     progress: dict[str, int],
 ) -> dict[str, Any]:
-    is_tv = any(entry.episode_key for entry in entries)
-    group_id = ensure_entry_group(client, imdb_id, entries[0].folder, is_tv, dry_run)
+    group_id = ensure_entry_group(client, imdb_id, entries[0], dry_run)
 
     episode_by_key = {(item.season, item.episode): item for item in episodes}
     # scene_index 只按库里已有的季累计，缺失的季不占位。
@@ -202,7 +226,8 @@ def sync_series(
     }
     result: dict[str, Any] = {"updated": 0, "skipped": 0, "failed": []}
 
-    for scene, _, file_name, key in entries:
+    for entry in entries:
+        scene, file_name, key = entry.scene, entry.file_name, entry.episode_key
         progress["done"] += 1
         emit_progress(progress["done"] / progress["total"])
         if group_id is None:

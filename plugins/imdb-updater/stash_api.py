@@ -91,6 +91,34 @@ def find_scenes(
     return data["findScenes"]["scenes"]
 
 
+def find_entry_group_categories(client: StashClient, path_regex: str) -> list[dict[str, Any]]:
+    data = client.request(
+        """
+        query FindEntryGroups($sceneFilter: SceneFilterType, $filter: FindFilterType) {
+          findScenes(scene_filter: $sceneFilter, filter: $filter) {
+            scenes {
+              groups {
+                group {
+                  id
+                  containing_groups {
+                    group {
+                      id
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """,
+        {
+            "sceneFilter": {"path": {"value": path_regex, "modifier": "MATCHES_REGEX"}},
+            "filter": {"per_page": -1},
+        },
+    )
+    return data["findScenes"]["scenes"]
+
+
 def find_groups(client: StashClient, group_filter: dict[str, Any]) -> list[dict[str, Any]]:
     data = client.request(
         """
