@@ -13,17 +13,11 @@ from stash_api import (
     bulk_update_performer_tags,
     bulk_update_scene_tags,
     find_galleries,
-    find_gallery_by_id,
-    find_group_by_id,
     find_groups,
-    find_image_by_id,
     find_images,
-    find_performer_by_id,
     find_performers,
-    find_root_tag_by_name,
-    find_scene_by_id,
+    find_root_tags,
     find_scenes,
-    find_tag_by_id,
 )
 
 ROOT_TAG_NAMES = {
@@ -112,17 +106,16 @@ def flatten_tag_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def load_type_config(client: StashClient, entity_type: str) -> dict[str, Any] | None:
+def load_type_config(
+    roots_by_name: dict[str, dict[str, Any]], entity_type: str
+) -> dict[str, Any] | None:
     root_name = ROOT_TAG_NAMES[entity_type]
-    root = find_root_tag_by_name(client, root_name)
+    root = roots_by_name.get(root_name)
     if not root:
         emit_warn(f"Root tag {root_name} was not found; skipping {entity_type}")
         return None
 
-    subtype_tags = [
-        find_tag_by_id(client, str(child["id"])) for child in root.get("children") or []
-    ]
-    subtypes = [build_tag_node(tag) for tag in subtype_tags if tag]
+    subtypes = [build_tag_node(child) for child in root["children"]]
     if not subtypes:
         emit_warn(f"Root tag {root_name} has no subtypes; skipping {entity_type}")
         return None
@@ -352,42 +345,37 @@ def apply_item_updates(
     }
 
 
-def select_items_for_entity(
-    client: StashClient,
-    entity_type: str,
-    hook_context: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
-    if not hook_context:
-        if entity_type == "gallery":
-            return find_galleries(client)
-        if entity_type == "group":
-            return find_groups(client)
-        if entity_type == "image":
-            return find_images(client)
-        if entity_type == "scene":
-            return find_scenes(client)
-        if entity_type == "performer":
-            return find_performers(client)
-        raise RuntimeError(f"Unsupported entity type: {entity_type}")
+FIND_ITEMS = {
+    "gallery": find_galleries,
+    "group": find_groups,
+    "image": find_images,
+    "scene": find_scenes,
+    "performer": find_performers,
+}
 
+
+def resolve_hook_item_ids(hook_context: dict[str, Any]) -> list[str]:
     item_id = hook_context.get("id")
     if item_id is None:
         return []
 
-    if entity_type == "gallery":
-        item = find_gallery_by_id(client, str(item_id))
-    elif entity_type == "group":
-        item = find_group_by_id(client, str(item_id))
-    elif entity_type == "image":
-        item = find_image_by_id(client, str(item_id))
-    elif entity_type == "scene":
-        item = find_scene_by_id(client, str(item_id))
-    elif entity_type == "performer":
-        item = find_performer_by_id(client, str(item_id))
-    else:
-        raise RuntimeError(f"Unsupported entity type: {entity_type}")
+    # Stash 对批量更新的每个实体各触发一次 hook，且 input 都带着整批 ids。
+    # 只让第一个 hook 处理整批，其余直接跳过。
+    batch_ids = [str(batch_id) for batch_id in (hook_context.get("input") or {}).get("ids") or []]
+    if not batch_ids:
+        return [str(item_id)]
+    return batch_ids if str(item_id) == batch_ids[0] else []
 
-    return [item] if item else []
+
+def resolve_preferred_tag_ids(hook_context: dict[str, Any] | None) -> list[str] | None:
+    if not hook_context or "tag_ids" not in (hook_context.get("inputFields") or []):
+        return None
+
+    tag_ids = hook_context["input"]["tag_ids"]
+    # 批量更新的 tag_ids 形如 {"ids": [...], "mode": "SET" | "ADD" | "REMOVE"}。
+    if isinstance(tag_ids, dict):
+        tag_ids = tag_ids["ids"] if tag_ids["mode"] != "REMOVE" else None
+    return [str(tag_id) for tag_id in tag_ids or []] or None
 
 
 def run() -> dict[str, Any]:
@@ -397,13 +385,11 @@ def run() -> dict[str, Any]:
     hook_context = args.get("hookContext")
     requested_entity_type = str(args.get("entity_type") or "").strip().lower()
     dry_run = str(args.get("dry_run", "false")).strip().lower() == "true"
-    hook_input = (hook_context or {}).get("input") or {}
-    input_fields = set((hook_context or {}).get("inputFields") or [])
-    preferred_tag_ids = (
-        [str(tag_id) for tag_id in hook_input.get("tag_ids") or []]
-        if "tag_ids" in input_fields
-        else None
-    )
+    item_ids = resolve_hook_item_ids(hook_context) if hook_context else None
+    if hook_context and not item_ids:
+        emit_info("Skipped: this hook is covered by the first hook of the same batch")
+        return {"error": None, "output": {"dry_run": dry_run, "skipped_batch_member": True}}
+    preferred_tag_ids = resolve_preferred_tag_ids(hook_context)
 
     if requested_entity_type and requested_entity_type not in ROOT_TAG_NAMES:
         raise ValueError(f"Unsupported entity type: {requested_entity_type}")
@@ -419,10 +405,13 @@ def run() -> dict[str, Any]:
         if requested_entity_type
         else ["gallery", "group", "image", "scene", "performer"]
     )
+    roots_by_name = {
+        tag["name"]: tag for tag in find_root_tags(client, list(ROOT_TAG_NAMES.values()))
+    }
     type_configs = {
         entity_type: config
         for entity_type in entity_types
-        if (config := load_type_config(client, entity_type)) is not None
+        if (config := load_type_config(roots_by_name, entity_type)) is not None
     }
     output: dict[str, Any] = {"dry_run": dry_run}
     items_by_entity: dict[str, list[dict[str, Any]]] = {}
@@ -437,7 +426,7 @@ def run() -> dict[str, Any]:
                 "reason": f"Missing {ROOT_TAG_NAMES[entity_type]} or its subtypes",
             }
             continue
-        items = select_items_for_entity(client, entity_type, hook_context)
+        items = FIND_ITEMS[entity_type](client, item_ids)
         items_by_entity[entity_type] = items
         emit_info(f"Loaded {len(items)} {entity_type} items")
 

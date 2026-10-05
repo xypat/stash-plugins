@@ -1,8 +1,8 @@
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
 from plugin_runtime import build_cookie_header
 
@@ -14,6 +14,9 @@ class StashClient:
     session_cookie: dict[str, Any] | None
 
     def request(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        # 延迟导入：urllib.request 启动开销约 100ms，被跳过的 hook 用不到它。
+        from urllib.request import Request, urlopen
+
         payload = json.dumps({"query": query, "variables": variables or {}}).encode("utf-8")
         parsed_url = urlsplit(self.graphql_url)
         origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
@@ -52,138 +55,46 @@ def _normalize_item(item: dict[str, Any], paths: list[str | None] | None = None)
     return normalized
 
 
-def find_root_tags(client: StashClient) -> list[dict[str, Any]]:
+TAG_TREE_DEPTH = 5
+
+
+def _tag_tree_fields(depth: int) -> str:
+    fields = "id name aliases custom_fields"
+    if depth == 0:
+        return fields
+    return f"{fields} children {{ {_tag_tree_fields(depth - 1)} }}"
+
+
+def find_root_tags(client: StashClient, names: list[str]) -> list[dict[str, Any]]:
     data = client.request(
-        """
-        query FindRootTags($tagFilter: TagFilterType, $filter: FindFilterType) {
-          findTags(tag_filter: $tagFilter, filter: $filter) {
-            tags {
-              id
-              name
-              aliases
-              custom_fields
-              parent_count
-              children {
-                id
-                name
-                aliases
-                custom_fields
-                parent_count
-                children {
-                  id
-                  name
-                  aliases
-                  custom_fields
-                  parent_count
-                  children {
-                    id
-                    name
-                    aliases
-                    custom_fields
-                    parent_count
-                  }
-                }
-              }
-            }
-          }
-        }
+        f"""
+        query FindRootTags($tagFilter: TagFilterType, $filter: FindFilterType) {{
+          findTags(tag_filter: $tagFilter, filter: $filter) {{
+            tags {{
+              {_tag_tree_fields(TAG_TREE_DEPTH)}
+            }}
+          }}
+        }}
         """,
         {
-            "tagFilter": {"parent_count": {"value": 0, "modifier": "EQUALS"}},
+            "tagFilter": {
+                "name": {
+                    "value": f"^({'|'.join(map(re.escape, names))})$",
+                    "modifier": "MATCHES_REGEX",
+                },
+                "parent_count": {"value": 0, "modifier": "EQUALS"},
+            },
             "filter": {"per_page": -1},
         },
     )
     return data["findTags"]["tags"]
 
 
-def find_root_tag_by_name(client: StashClient, name: str) -> dict[str, Any] | None:
+def find_galleries(client: StashClient, ids: list[str] | None = None) -> list[dict[str, Any]]:
     data = client.request(
         """
-        query FindRootTagByName($tagFilter: TagFilterType, $filter: FindFilterType) {
-          findTags(tag_filter: $tagFilter, filter: $filter) {
-            tags {
-              id
-              name
-              aliases
-              custom_fields
-              parent_count
-              children {
-                id
-                name
-                aliases
-                custom_fields
-                parent_count
-                children {
-                  id
-                  name
-                  aliases
-                  custom_fields
-                  parent_count
-                  children {
-                    id
-                    name
-                    aliases
-                    custom_fields
-                    parent_count
-                  }
-                }
-              }
-            }
-          }
-        }
-        """,
-        {
-            "tagFilter": {
-                "name": {"value": name, "modifier": "EQUALS"},
-                "parent_count": {"value": 0, "modifier": "EQUALS"},
-            },
-            "filter": {"per_page": -1},
-        },
-    )
-    tags = data["findTags"]["tags"]
-    return tags[0] if tags else None
-
-
-def find_tag_by_id(client: StashClient, tag_id: str) -> dict[str, Any] | None:
-    data = client.request(
-        """
-        query FindTag($id: ID!) {
-          findTag(id: $id) {
-            id
-            name
-            aliases
-            custom_fields
-            children {
-              id
-              name
-              aliases
-              custom_fields
-              children {
-                id
-                name
-                aliases
-                custom_fields
-                children {
-                  id
-                  name
-                  aliases
-                  custom_fields
-                }
-              }
-            }
-          }
-        }
-        """,
-        {"id": tag_id},
-    )
-    return data.get("findTag")
-
-
-def find_galleries(client: StashClient) -> list[dict[str, Any]]:
-    data = client.request(
-        """
-        query FindGalleries($filter: FindFilterType) {
-          findGalleries(filter: $filter) {
+        query FindGalleries($filter: FindFilterType, $ids: [ID!]) {
+          findGalleries(filter: $filter, ids: $ids) {
             galleries {
               id
               title
@@ -201,7 +112,7 @@ def find_galleries(client: StashClient) -> list[dict[str, Any]]:
           }
         }
         """,
-        {"filter": {"per_page": -1}},
+        {"filter": {"per_page": -1}, "ids": ids},
     )
     return [
         _normalize_item(
@@ -215,45 +126,11 @@ def find_galleries(client: StashClient) -> list[dict[str, Any]]:
     ]
 
 
-def find_gallery_by_id(client: StashClient, gallery_id: str) -> dict[str, Any] | None:
+def find_groups(client: StashClient, ids: list[str] | None = None) -> list[dict[str, Any]]:
     data = client.request(
         """
-        query FindGallery($id: ID!) {
-          findGallery(id: $id) {
-            id
-            title
-            folder {
-              path
-            }
-            files {
-              path
-            }
-            tags {
-              id
-              name
-            }
-          }
-        }
-        """,
-        {"id": gallery_id},
-    )
-    gallery = data.get("findGallery")
-    if not gallery:
-        return None
-    return _normalize_item(
-        gallery,
-        [
-            (gallery.get("folder") or {}).get("path"),
-            *(file.get("path") for file in gallery.get("files") or []),
-        ],
-    )
-
-
-def find_groups(client: StashClient) -> list[dict[str, Any]]:
-    data = client.request(
-        """
-        query FindGroups($filter: FindFilterType) {
-          findGroups(filter: $filter) {
+        query FindGroups($filter: FindFilterType, $ids: [ID!]) {
+          findGroups(filter: $filter, ids: $ids) {
             groups {
               id
               name
@@ -265,36 +142,16 @@ def find_groups(client: StashClient) -> list[dict[str, Any]]:
           }
         }
         """,
-        {"filter": {"per_page": -1}},
+        {"filter": {"per_page": -1}, "ids": ids},
     )
     return [_normalize_item(item) for item in data["findGroups"]["groups"]]
 
 
-def find_group_by_id(client: StashClient, group_id: str) -> dict[str, Any] | None:
+def find_images(client: StashClient, ids: list[str] | None = None) -> list[dict[str, Any]]:
     data = client.request(
         """
-        query FindGroup($id: ID!) {
-          findGroup(id: $id) {
-            id
-            name
-            tags {
-              id
-              name
-            }
-          }
-        }
-        """,
-        {"id": group_id},
-    )
-    group = data.get("findGroup")
-    return _normalize_item(group) if group else None
-
-
-def find_images(client: StashClient) -> list[dict[str, Any]]:
-    data = client.request(
-        """
-        query FindImages($filter: FindFilterType) {
-          findImages(filter: $filter) {
+        query FindImages($filter: FindFilterType, $ids: [ID!]) {
+          findImages(filter: $filter, ids: $ids) {
             images {
               id
               title
@@ -311,7 +168,7 @@ def find_images(client: StashClient) -> list[dict[str, Any]]:
           }
         }
         """,
-        {"filter": {"per_page": -1}},
+        {"filter": {"per_page": -1}, "ids": ids},
     )
     return [
         _normalize_item(
@@ -322,41 +179,11 @@ def find_images(client: StashClient) -> list[dict[str, Any]]:
     ]
 
 
-def find_image_by_id(client: StashClient, image_id: str) -> dict[str, Any] | None:
+def find_scenes(client: StashClient, ids: list[str] | None = None) -> list[dict[str, Any]]:
     data = client.request(
         """
-        query FindImage($id: ID!) {
-          findImage(id: $id) {
-            id
-            title
-            visual_files {
-              ... on ImageFile {
-                path
-              }
-            }
-            tags {
-              id
-              name
-            }
-          }
-        }
-        """,
-        {"id": image_id},
-    )
-    image = data.get("findImage")
-    if not image:
-        return None
-    return _normalize_item(
-        image,
-        [file.get("path") for file in image.get("visual_files") or []],
-    )
-
-
-def find_scenes(client: StashClient) -> list[dict[str, Any]]:
-    data = client.request(
-        """
-        query FindScenes($filter: FindFilterType) {
-          findScenes(filter: $filter) {
+        query FindScenes($filter: FindFilterType, $ids: [ID!]) {
+          findScenes(filter: $filter, ids: $ids) {
             scenes {
               id
               title
@@ -371,7 +198,7 @@ def find_scenes(client: StashClient) -> list[dict[str, Any]]:
           }
         }
         """,
-        {"filter": {"per_page": -1}},
+        {"filter": {"per_page": -1}, "ids": ids},
     )
     return [
         _normalize_item(item, [file.get("path") for file in item.get("files") or []])
@@ -379,38 +206,11 @@ def find_scenes(client: StashClient) -> list[dict[str, Any]]:
     ]
 
 
-def find_scene_by_id(client: StashClient, scene_id: str) -> dict[str, Any] | None:
+def find_performers(client: StashClient, ids: list[str] | None = None) -> list[dict[str, Any]]:
     data = client.request(
         """
-        query FindScene($id: ID!) {
-          findScene(id: $id) {
-            id
-            title
-            files {
-              path
-            }
-            tags {
-              id
-              name
-            }
-          }
-        }
-        """,
-        {"id": scene_id},
-    )
-    scene = data.get("findScene")
-    return (
-        _normalize_item(scene, [file.get("path") for file in scene.get("files") or []])
-        if scene
-        else None
-    )
-
-
-def find_performers(client: StashClient) -> list[dict[str, Any]]:
-    data = client.request(
-        """
-        query FindPerformers($filter: FindFilterType) {
-          findPerformers(filter: $filter) {
+        query FindPerformers($filter: FindFilterType, $ids: [ID!]) {
+          findPerformers(filter: $filter, ids: $ids) {
             performers {
               id
               name
@@ -423,30 +223,9 @@ def find_performers(client: StashClient) -> list[dict[str, Any]]:
           }
         }
         """,
-        {"filter": {"per_page": -1}},
+        {"filter": {"per_page": -1}, "ids": ids},
     )
     return [_normalize_item(item) for item in data["findPerformers"]["performers"]]
-
-
-def find_performer_by_id(client: StashClient, performer_id: str) -> dict[str, Any] | None:
-    data = client.request(
-        """
-        query FindPerformer($id: ID!) {
-          findPerformer(id: $id) {
-            id
-            name
-            rating100
-            tags {
-              id
-              name
-            }
-          }
-        }
-        """,
-        {"id": performer_id},
-    )
-    performer = data.get("findPerformer")
-    return _normalize_item(performer) if performer else None
 
 
 def update_gallery_tags(client: StashClient, gallery_id: str, tag_ids: list[str]) -> dict[str, Any]:
