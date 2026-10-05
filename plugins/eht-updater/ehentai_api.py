@@ -6,6 +6,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from constants import AUDIENCE_TAG_NAME_GAY, AUDIENCE_TAG_NAME_STRAIGHT
 from plugin_runtime import normalize_tag_text
 
 
@@ -79,5 +80,5 @@ def posted_to_date(posted: Any) -> str:
 def resolve_audience_tag_name(tags: list[str]) -> str:
     for tag in tags:
         if normalize_tag_text(tag).endswith("males only"):
-            return "Gay"
-    return "Straight"
+            return AUDIENCE_TAG_NAME_GAY
+    return AUDIENCE_TAG_NAME_STRAIGHT
