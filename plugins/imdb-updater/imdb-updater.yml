@@ -1,0 +1,28 @@
+name: IMDb Updater
+description: Link scenes in [imdbid=ttXXXX] folders to IMDb groups and fill TV episode metadata with Stash's IMDB scraper
+version: 0.1.0
+
+exec:
+  - python3
+  - "{pluginDir}/main.py"
+
+interface: raw
+errLog: info
+
+tasks:
+  - name: Sync All
+    description: Process every scene under a [imdbid=ttXXXX] folder that is not complete yet
+    defaultArgs:
+      dry_run: false
+  - name: Dry Run
+    description: Show the planned changes without writing them
+    defaultArgs:
+      dry_run: true
+
+hooks:
+  - name: Auto Sync After Scan
+    description: Link newly scanned scenes to their IMDb group and fill TV episode metadata
+    triggeredBy:
+      - Scene.Create.Post
+    defaultArgs:
+      dry_run: false
