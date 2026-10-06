@@ -1,17 +1,14 @@
 # IMDb Updater
 
-Stash external plugin for scenes inside `<root>/<category>/<title> [imdbid=ttXXXXXXX]/` folders,
-for example `IMDB/Movies/Alien: Romulus (2024) [imdbid=tt18412256]/`.
+Stash external plugin for scenes inside `<title> [imdbid=ttXXXXXXX]/` folders, for example
+`IMDB/Movies/Alien: Romulus (2024) [imdbid=tt18412256]/`. The folders above the title do not matter.
 
 ## What it does
 
 - Finds the group of the IMDb ID (whether or not its URL ends with a slash). When it does not exist,
   the plugin creates it and fills it with Stash's own `IMDB` scraper (`scrapeGroupURL`).
-  Existing groups are never modified, so groups you moved to another category stay where they are.
-- The parent groups are inferred from your data, so nothing needs to be configured: the root group
-  is named after the root folder, and a new group goes into the category group that already holds
-  the most groups from the same category folder. Only when there is none yet, a category group
-  named after the folder is created.
+  Existing groups are never modified. The plugin creates no other groups: there are no parent
+  groups for the root or category folders.
 - Tags a new group with the subtype tag under the `__GROUP__` root tag that is named or aliased
   `IMDb`, so give your subtype that alias. Nothing else is set: when the group is created, the
   extended-attributes plugin adds the attribute defaults of that subtype. When there is no such

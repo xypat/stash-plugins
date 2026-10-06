@@ -2,7 +2,7 @@ import json
 import re
 import sys
 import tempfile
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.error import HTTPError, URLError
@@ -19,7 +19,6 @@ from plugin_runtime import (
 from stash_api import (
     StashClient,
     create_group,
-    find_entry_group_categories,
     find_group_subtypes,
     find_groups,
     find_scenes,
@@ -71,8 +70,6 @@ class SceneEntry(NamedTuple):
     folder: str
     file_name: str
     episode_key: tuple[int, int] | None
-    root_name: str
-    category_name: str
 
 
 def parse_episode(file_name: str) -> tuple[int, int] | None:
@@ -85,17 +82,12 @@ def parse_episode(file_name: str) -> tuple[int, int] | None:
 
 
 def find_imdb_entry(scene: dict[str, Any]) -> tuple[str, SceneEntry] | None:
-    # 目录约定：<根目录>/<分类目录>/<作品> [imdbid=ttXXXX]/…
+    # The folder of a title carries the IMDb ID: <anything>/<title> [imdbid=ttXXXX]/...
     for file in scene["files"]:
         *parts, file_name = re.split(r"[\\/]", file["path"])
-        folders = [part for part in parts if part]
-        for index, folder in enumerate(folders[2:], start=2):
+        for folder in filter(None, parts):
             if match := IMDB_ID_RE.search(folder):
-                root_name, category_name = folders[index - 2 : index]
-                episode_key = parse_episode(file_name)
-                return match[1], SceneEntry(
-                    scene, folder, file_name, episode_key, root_name, category_name
-                )
+                return match[1], SceneEntry(scene, folder, file_name, parse_episode(file_name))
     return None
 
 
@@ -110,37 +102,6 @@ def group_entries_by_imdb_id(scenes: list[dict[str, Any]]) -> dict[str, list[Sce
 def fallback_group_name(folder: str) -> str:
     name = re.sub(r"\s*\[[^\]]*\]", "", folder)
     return re.sub(r"\s*\(\d{4}\)$", "", name).strip()
-
-
-def ensure_named_group(
-    client: StashClient, name: str, parent_id: str | None, dry_run: bool
-) -> str | None:
-    expected_parent_ids = [parent_id] if parent_id else []
-    for group in find_groups(client, {"name": {"value": name, "modifier": "EQUALS"}}):
-        if [item["group"]["id"] for item in group["containing_groups"]] == expected_parent_ids:
-            return group["id"]
-
-    if dry_run:
-        emit_info(f"Would create group: {name}")
-        return None
-    containing_groups = [{"group_id": parent_id}] if parent_id else None
-    created = create_group(client, {"name": name, "containing_groups": containing_groups})
-    emit_info(f"Created group: {name}")
-    return created["id"]
-
-
-def find_category_id(client: StashClient, root_name: str, category_name: str) -> str | None:
-    """从已有数据推断：同一分类目录下，已有作品最多的那个上级 Group。"""
-    path_regex = rf"[\\/]{re.escape(root_name)}[\\/]{re.escape(category_name)}[\\/]"
-    category_by_entry_id = {
-        group["id"]: group["containing_groups"][0]["group"]["id"]
-        for scene in find_entry_group_categories(client, path_regex)
-        for item in scene["groups"]
-        if (group := item["group"])["containing_groups"]
-    }
-    if not category_by_entry_id:
-        return None
-    return Counter(category_by_entry_id.values()).most_common(1)[0][0]
 
 
 def find_type_tag(client: StashClient) -> dict[str, Any] | None:
@@ -166,11 +127,6 @@ def ensure_entry_group(
     if existing:
         return existing[0]["id"]
 
-    # 根 Group 和分类 Group 沿用目录名，已有的分类（如被你改过名的）优先。
-    root_id = ensure_named_group(client, entry.root_name, None, dry_run)
-    category_id = find_category_id(client, entry.root_name, entry.category_name)
-    if category_id is None:
-        category_id = ensure_named_group(client, entry.category_name, root_id, dry_run)
     type_tag = find_type_tag(client)
     if type_tag is None:
         emit_warn(
@@ -192,7 +148,6 @@ def ensure_entry_group(
     group_input = {field: scraped[field] for field in GROUP_SCRAPED_FIELDS if scraped.get(field)}
     group_input.setdefault("name", fallback_group_name(entry.folder))
     group_input["urls"] = scraped.get("urls") or [url]
-    group_input["containing_groups"] = [{"group_id": category_id}]
     if type_tag:
         group_input["tag_ids"] = [type_tag["id"]]
     created = create_group(client, group_input)
