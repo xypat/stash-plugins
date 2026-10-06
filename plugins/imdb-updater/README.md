@@ -12,6 +12,10 @@ for example `IMDB/Movies/Alien: Romulus (2024) [imdbid=tt18412256]/`.
   is named after the root folder, and a new group goes into the category group that already holds
   the most groups from the same category folder. Only when there is none yet, a category group
   named after the folder is created.
+- Tags a new group with the subtype tag under the `__GROUP__` root tag that is named or aliased
+  `IMDb`, so give your subtype that alias. Nothing else is set: when the group is created, the
+  extended-attributes plugin adds the attribute defaults of that subtype. When there is no such
+  tag, a warning is logged and the group is created without it.
 - Links the scene to that group.
 - For TV episodes (`S01E02`, `1x02`) it also:
   - sets `scene_index` as the running number over the seasons that exist in your library;
@@ -25,6 +29,11 @@ for example `IMDB/Movies/Alien: Romulus (2024) [imdbid=tt18412256]/`.
 - `Dry Run`: show what would change without writing anything.
 - `Auto Sync After Scan`: runs on `Scene.Create.Post` and processes the whole IMDb entry of the new
   scene, so `scene_index` stays consistent when a new season arrives.
+
+A scan runs the hook for several files at once, so runs that have work to do are serialized with a
+lock file (`<stash config dir>/cache/imdb-updater.lock`). Without it, files of the same title could
+each find no group and each create their own. Scenes outside `[imdbid=...]` folders return before
+taking the lock.
 
 ## Episode IDs
 

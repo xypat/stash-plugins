@@ -1,7 +1,10 @@
+import fcntl
 import json
 import os
 import re
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +30,20 @@ def emit_progress(progress: float) -> None:
 
 def emit_warn(message: str) -> None:
     emit_log(LOG_LEVEL_WARN, message)
+
+
+@contextmanager
+def exclusive_lock(lock_path: Path) -> Iterator[None]:
+    """Let only one instance run at a time.
+
+    A scan is multi-threaded, so several files of one title fire the hook concurrently. Without this
+    lock they would all find that the group does not exist yet and each create one. The lock is
+    released when the process exits, so it never goes stale.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        yield
 
 
 def load_plugin_input() -> dict[str, Any]:

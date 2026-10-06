@@ -8,11 +8,19 @@ from typing import Any, NamedTuple
 from urllib.error import HTTPError, URLError
 
 from imdb_episodes import Episode, load_episodes
-from plugin_runtime import emit_info, emit_progress, emit_warn, load_plugin_input, read_api_key
+from plugin_runtime import (
+    emit_info,
+    emit_progress,
+    emit_warn,
+    exclusive_lock,
+    load_plugin_input,
+    read_api_key,
+)
 from stash_api import (
     StashClient,
     create_group,
     find_entry_group_categories,
+    find_group_subtypes,
     find_groups,
     find_scenes,
     scrape_group_url,
@@ -24,6 +32,10 @@ IMDB_ID_RE = re.compile(r"\[imdbid=(tt\d+)\]", re.IGNORECASE)
 SEASON_EPISODES_RE = re.compile(r"[Ss](\d{1,2})((?:[ ._-]?[Ee]\d{1,3})+)")
 SEASON_X_EPISODE_RE = re.compile(r"\b(\d{1,2})x(\d{1,3})(?:-(\d{1,3}))?\b", re.IGNORECASE)
 EPISODE_NUMBER_RE = re.compile(r"[Ee](\d{1,3})")
+
+# Name or alias of the subtype tag under __GROUP__ that every IMDb group gets. Put this alias
+# on the subtype. extended-attributes adds its attribute defaults when the group is created.
+GROUP_TYPE_TAG = "IMDb"
 
 GROUP_SCRAPED_FIELDS = ("name", "date", "director", "synopsis", "front_image", "back_image")
 SCENE_SCRAPED_FIELDS = {
@@ -131,6 +143,19 @@ def find_category_id(client: StashClient, root_name: str, category_name: str) ->
     return Counter(category_by_entry_id.values()).most_common(1)[0][0]
 
 
+def find_type_tag(client: StashClient) -> dict[str, Any] | None:
+    """The subtype tag under `__GROUP__` that is named or aliased `GROUP_TYPE_TAG`, if any."""
+    wanted = GROUP_TYPE_TAG.casefold()
+    return next(
+        (
+            tag
+            for tag in find_group_subtypes(client)
+            if wanted in (name.casefold() for name in [tag["name"], *tag["aliases"]])
+        ),
+        None,
+    )
+
+
 def ensure_entry_group(
     client: StashClient, imdb_id: str, entry: SceneEntry, dry_run: bool
 ) -> str | None:
@@ -146,8 +171,16 @@ def ensure_entry_group(
     category_id = find_category_id(client, entry.root_name, entry.category_name)
     if category_id is None:
         category_id = ensure_named_group(client, entry.category_name, root_id, dry_run)
+    type_tag = find_type_tag(client)
+    if type_tag is None:
+        emit_warn(
+            f"No subtype tag named or aliased '{GROUP_TYPE_TAG}' under __GROUP__, "
+            "so the group gets no tag"
+        )
     if dry_run:
-        emit_info(f"Would create entry group from {url}")
+        emit_info(
+            f"Would create entry group from {url} (tag: {type_tag['name'] if type_tag else '-'})"
+        )
         return None
 
     scraped: dict[str, Any] = {}
@@ -160,6 +193,8 @@ def ensure_entry_group(
     group_input.setdefault("name", fallback_group_name(entry.folder))
     group_input["urls"] = scraped.get("urls") or [url]
     group_input["containing_groups"] = [{"group_id": category_id}]
+    if type_tag:
+        group_input["tag_ids"] = [type_tag["id"]]
     created = create_group(client, group_input)
     emit_info(f"Created group: {created['name']} ({url})")
     return created["id"]
@@ -276,29 +311,37 @@ def run() -> dict[str, Any]:
 
     scene_ids = [str(hook_context["id"])] if hook_context and "id" in hook_context else None
     entries_by_imdb_id = group_entries_by_imdb_id(find_scenes(client, scene_ids))
-    if scene_ids and entries_by_imdb_id:
-        # 新增场景可能改变同一作品其他场景的 scene_index，所以连同整部作品一起处理。
-        entries_by_imdb_id = group_entries_by_imdb_id(
-            find_scenes(client, imdb_ids=list(entries_by_imdb_id))
-        )
     if not entries_by_imdb_id:
         return {"error": None, "output": {"dry_run": dry_run, "series": {}}}
 
-    tv_series_ids = {
-        imdb_id
-        for imdb_id, entries in entries_by_imdb_id.items()
-        if any(entry.episode_key for entry in entries)
-    }
     cache_path = Path(server_connection.get("Dir") or tempfile.gettempdir()) / "cache"
-    episodes = load_episodes(cache_path / "imdb-updater-episodes.json", tv_series_ids)
+    # Scenes outside IMDb folders returned above and never queue. The rest run one at a time so
+    # concurrent hooks cannot create duplicate groups.
+    with exclusive_lock(cache_path / "imdb-updater.lock"):
+        if scene_ids:
+            # A new scene can change the scene_index of the other scenes of the same title, so the
+            # whole title is processed.
+            # Read again inside the lock to see what the previous instance just created.
+            entries_by_imdb_id = group_entries_by_imdb_id(
+                find_scenes(client, imdb_ids=list(entries_by_imdb_id))
+            )
 
-    total = sum(len(entries) for entries in entries_by_imdb_id.values())
-    progress = {"done": 0, "total": total}
-    emit_info(f"Processing {total} scenes of {len(entries_by_imdb_id)} IMDb entries")
-    output = {
-        imdb_id: sync_series(client, imdb_id, entries, episodes.get(imdb_id, []), dry_run, progress)
-        for imdb_id, entries in entries_by_imdb_id.items()
-    }
+        tv_series_ids = {
+            imdb_id
+            for imdb_id, entries in entries_by_imdb_id.items()
+            if any(entry.episode_key for entry in entries)
+        }
+        episodes = load_episodes(cache_path / "imdb-updater-episodes.json", tv_series_ids)
+
+        total = sum(len(entries) for entries in entries_by_imdb_id.values())
+        progress = {"done": 0, "total": total}
+        emit_info(f"Processing {total} scenes of {len(entries_by_imdb_id)} IMDb entries")
+        output = {
+            imdb_id: sync_series(
+                client, imdb_id, entries, episodes.get(imdb_id, []), dry_run, progress
+            )
+            for imdb_id, entries in entries_by_imdb_id.items()
+        }
     return {"error": None, "output": {"dry_run": dry_run, "series": output}}
 
 

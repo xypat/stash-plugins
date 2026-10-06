@@ -1,6 +1,6 @@
 name: IMDb Updater
 description: Link scenes in [imdbid=ttXXXX] folders to IMDb groups and fill TV episode metadata with Stash's IMDB scraper
-version: 0.1.0
+version: 0.2.0
 
 exec:
   - python3

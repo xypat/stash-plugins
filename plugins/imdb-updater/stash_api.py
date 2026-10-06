@@ -6,6 +6,8 @@ from urllib.parse import urlsplit
 from plugin_runtime import build_cookie_header
 
 IMDB_PATH_REGEX = r"\[imdbid=tt\d+\]"
+# Root tag of the Group types, shared with extended-attributes.
+GROUP_ROOT_TAG = "__GROUP__"
 
 SCENE_FIELDS = """
   id
@@ -139,6 +141,32 @@ def find_groups(client: StashClient, group_filter: dict[str, Any]) -> list[dict[
         {"groupFilter": group_filter, "filter": {"per_page": -1}},
     )
     return data["findGroups"]["groups"]
+
+
+def find_group_subtypes(client: StashClient) -> list[dict[str, Any]]:
+    """The subtype tags directly under the `__GROUP__` root tag."""
+    data = client.request(
+        """
+        query FindGroupSubtypes($tagFilter: TagFilterType!) {
+          findTags(tag_filter: $tagFilter, filter: { per_page: -1 }) {
+            tags {
+              children {
+                id
+                name
+                aliases
+              }
+            }
+          }
+        }
+        """,
+        {
+            "tagFilter": {
+                "name": {"value": GROUP_ROOT_TAG, "modifier": "EQUALS"},
+                "parents": {"value": [], "modifier": "IS_NULL"},
+            }
+        },
+    )
+    return [child for tag in data["findTags"]["tags"] for child in tag["children"]]
 
 
 def create_group(client: StashClient, group_input: dict[str, Any]) -> dict[str, Any]:
